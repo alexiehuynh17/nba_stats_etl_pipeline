@@ -1,0 +1,11 @@
+selenium
+requests
+numpy
+beautifulsoup4
+apache-airflow
+docker
+pandas
+tqdm
+minio
+apache-airflow-providers-apache-spark 
+pyspark

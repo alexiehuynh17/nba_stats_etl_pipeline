@@ -1,0 +1,128 @@
+
+x-spark-common: &spark-common
+  image: bitnami/spark:latest
+  volumes:
+    - ./jobs:/opt/bitnami/spark/jobs
+    - ./tmps:/opt/airflow/tmps
+  networks:
+    - nba_airflow_network
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  env_file:
+    - airflow.env
+  volumes:
+    - ./jobs:/opt/airflow/jobs
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./tmps:/opt/airflow/tmps
+  depends_on:
+    - postgres
+  networks:
+    - nba_airflow_network
+
+services:
+  selenium:
+    image: selenium/standalone-firefox:latest
+    ports:
+      - 4444:4444
+    restart: always
+    networks:
+      nba_airflow_network:
+        ipv4_address: 186.20.0.9
+
+  postgres:
+    image: postgres:14.0
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    restart: always
+    networks:
+      nba_airflow_network:
+        ipv4_address: 186.20.0.10
+
+  minio:
+    image: minio/minio:latest
+    ports:
+      - '9005:9000'
+      - '9090:9090'
+    volumes:
+      - './minio_data:/data'
+    env_file:
+      - airflow.env
+    command: server --console-address ":9090" /data
+    networks:
+      nba_airflow_network:
+        ipv4_address: 186.20.0.11
+  
+  superset:
+    image: superset_docker:latest
+    container_name: superset
+    environment:
+      - ADMIN_USERNAME=airflow
+      - ADMIN_EMAIL=alexielab@gmail.com
+      - ADMIN_PASSWORD=airflow
+      - SUPERSET_SECRET_KEY=airflow_superset
+    ports:
+      - "8500:8088"
+    restart: always
+    networks:
+      nba_airflow_network:
+       ipv4_address: 186.20.0.12
+
+  spark-master:
+    <<: *spark-common
+    command: bin/spark-class org.apache.spark.deploy.master.Master
+    ports:
+      - "9095:8080"
+      - "7077:7077"
+    restart: always    
+    networks:
+    - nba_airflow_network
+
+  spark-worker:
+    <<: *spark-common
+    command: bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    depends_on:
+      - spark-master
+    environment:
+      SPARK_MODE: worker
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 2g
+      SPARK_MASTER_URL: spark://spark-master:7077
+    restart: always    
+    networks:
+    - nba_airflow_network
+
+  webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    depends_on:
+      - scheduler
+    restart: always
+
+  scheduler:
+    <<: *airflow-common
+    command: bash -c "airflow db migrate && airflow users create --username admin --firstname Alexie --lastname Huynh --role Admin --email alexielab@gmail.com --password admin && airflow scheduler"
+
+  
+
+volumes:
+  postgres-db-volume:
+
+networks:
+  nba_airflow_network:
+    driver: bridge
+    name: nba_airflow_network
+    ipam:
+      config:
+        - subnet: 186.20.0.0/24
+          gateway: 186.20.0.1
